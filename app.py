@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import requests
+from io import BytesIO
 
 # --- 1. KONFIGURASI HALAMAN UTAMA ---
 st.set_page_config(page_title="MNS Document Tracking", layout="centered", page_icon="📑")
@@ -7,31 +9,45 @@ st.set_page_config(page_title="MNS Document Tracking", layout="centered", page_i
 # --- 2. DATABASE UTAMA (LINK DIRECT DOWNLOAD ONEDRIVE) ---
 EXCEL_LINK = "https://onedrive.live.com/download?cid=DD9FA8FB69B8D724&resid=DD9FA8FB69B8D724%21142234&authkey=AHqOZdbUt51LujM"
 
-@st.cache_data(ttl=5) # Percepat refresh menjadi 5 detik untuk pengetesan
+@st.cache_data(ttl=5) # Refresh 5 detik
 def load_data_from_excel():
     try:
-        # Buka file excel untuk membaca seluruh nama sheet yang ada secara dinamis
-        excel_file = pd.ExcelFile(EXCEL_LINK)
+        # Menyamar sebagai browser Chrome Windows agar tidak diblokir oleh sistem anti-bot Microsoft
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+        }
+        
+        # Proses mengunduh file secara paksa
+        response = requests.get(EXCEL_LINK, headers=headers)
+        response.raise_for_status() # Memastikan status HTTP 200 OK (Berhasil)
+        
+        # Mengubah data yang diunduh menjadi bentuk file memori (Bytes)
+        excel_data = BytesIO(response.content)
+        
+        # Buka file excel dari memori
+        excel_file = pd.ExcelFile(excel_data)
         sheet_names = excel_file.sheet_names
         
-        # Cari sheet dokumen (bisa Dokumen atau dokumen)
+        # Cari sheet dengan fleksibel
         sheet_doc = [s for s in sheet_names if 'dokumen' in s.lower()][0]
-        # Cari sheet users (bisa Users atau users)
         sheet_user = [s for s in sheet_names if 'user' in s.lower()][0]
         
         df_docs = excel_file.parse(sheet_doc)
         df_depts = excel_file.parse(sheet_user)
         
         # Bersihkan spasi kosong di nama kolom
-        df_docs.columns = df_docs.columns.str.strip().str.lower()
-        df_depts.columns = df_depts.columns.str.strip().str.lower()
+        df_docs.columns = df_docs.columns.astype(str).str.strip().str.lower()
+        df_depts.columns = df_depts.columns.astype(str).str.strip().str.lower()
         
         return df_docs, df_depts
+    except requests.exceptions.RequestException as req_err:
+        st.error(f"Akses ke OneDrive diblokir/gagal (Network Error): {req_err}")
+        return pd.DataFrame(), pd.DataFrame()
     except Exception as e:
-        st.error("Gagal membaca struktur Excel. Silakan pastikan file Excel di OneDrive Anda tidak sedang ditutup paksa atau rusak.")
+        st.error(f"Gagal membaca format data Excel (Parsing Error): {e}")
         return pd.DataFrame(), pd.DataFrame()
 
-# Memuat data ke memori aplikasi
+# Memuat data
 db_tracking_dokumen, db_departments = load_data_from_excel()
 
 # --- 3. MANAJEMEN STATE LOGIN ---
@@ -48,7 +64,6 @@ if not st.session_state.is_logged_in:
     st.subheader("🔑 Login Portal Departemen")
     
     if not db_departments.empty:
-        # Deteksi nama kolom secara fleksibel
         col_dept = 'dept_name' if 'dept_name' in db_departments.columns else db_departments.columns[0]
         col_pass = 'password' if 'password' in db_departments.columns else db_departments.columns[1]
         
@@ -62,7 +77,6 @@ if not st.session_state.is_logged_in:
             elif not password_input:
                 st.warning("Kolom password tidak boleh kosong!")
             else:
-                # Validasi login kustom
                 match = db_departments[
                     (db_departments[col_dept].astype(str).str.strip().str.upper() == dept_input.strip().upper()) & 
                     (db_departments[col_pass].astype(str).str.strip() == password_input.strip())
@@ -75,7 +89,7 @@ if not st.session_state.is_logged_in:
                 else:
                     st.error("Password salah! Silakan periksa kembali atau hubungi Sekretaris (Abygaile).")
     else:
-        st.info("Sedang menyinkronkan data akses dari OneDrive...")
+        st.info("Sistem sedang mengunduh dan menyinkronkan data dari OneDrive...")
 
 # --- 5. HALAMAN UTAMA MONITORING (SETELAH LOG IN BERHASIL) ---
 else:
@@ -102,7 +116,6 @@ else:
             if df_filtered.empty:
                 st.info(f"Saat ini tidak ada dokumen dari departemen {current_dept} yang sedang diproses di meja BUH.")
             else:
-                # Mengikuti susunan 8 kolom yang Anda berikan
                 kolom_tampilan = ['department', 'pic', 'dokumen', 'tanggal_masuk', 'tanggal_ambil', 'urgency', 'status', 'remark']
                 kolom_tersedia = [col for col in kolom_tampilan if col in df_filtered.columns]
                 
