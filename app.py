@@ -12,20 +12,20 @@ EXCEL_LINK = "https://onedrive.live.com/download?cid=DD9FA8FB69B8D724&resid=DD9F
 @st.cache_data(ttl=5) # Refresh 5 detik
 def load_data_from_excel():
     try:
-        # Menyamar sebagai browser Chrome Windows agar tidak diblokir oleh sistem anti-bot Microsoft
+        # Menyamar sebagai browser Chrome Windows
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
         }
         
-        # Proses mengunduh file secara paksa
+        # Proses mengunduh file
         response = requests.get(EXCEL_LINK, headers=headers)
-        response.raise_for_status() # Memastikan status HTTP 200 OK (Berhasil)
+        response.raise_for_status() 
         
-        # Mengubah data yang diunduh menjadi bentuk file memori (Bytes)
+        # Mengubah data yang diunduh menjadi bentuk file memori
         excel_data = BytesIO(response.content)
         
-        # Buka file excel dari memori
-        excel_file = pd.ExcelFile(excel_data)
+        # PERBAIKAN: Menambahkan 'engine="openpyxl"' secara eksplisit agar sistem tidak bingung
+        excel_file = pd.ExcelFile(excel_data, engine='openpyxl')
         sheet_names = excel_file.sheet_names
         
         # Cari sheet dengan fleksibel
@@ -40,6 +40,7 @@ def load_data_from_excel():
         df_depts.columns = df_depts.columns.astype(str).str.strip().str.lower()
         
         return df_docs, df_depts
+        
     except requests.exceptions.RequestException as req_err:
         st.error(f"Akses ke OneDrive diblokir/gagal (Network Error): {req_err}")
         return pd.DataFrame(), pd.DataFrame()
