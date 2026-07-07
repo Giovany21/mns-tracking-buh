@@ -7,19 +7,28 @@ st.set_page_config(page_title="MNS Document Tracking", layout="centered", page_i
 # --- 2. DATABASE UTAMA (LINK DIRECT DOWNLOAD ONEDRIVE) ---
 EXCEL_LINK = "https://onedrive.live.com/download?cid=DD9FA8FB69B8D724&resid=DD9FA8FB69B8D724%21142234&authkey=AHqOZdbUt51LujM"
 
-@st.cache_data(ttl=15) # Sinkronisasi otomatis dari Excel setiap 15 detik
+@st.cache_data(ttl=5) # Percepat refresh menjadi 5 detik untuk pengetesan
 def load_data_from_excel():
     try:
-        df_docs = pd.read_excel(EXCEL_LINK, sheet_name="Dokumen")
-        df_depts = pd.read_excel(EXCEL_LINK, sheet_name="Users")
+        # Buka file excel untuk membaca seluruh nama sheet yang ada secara dinamis
+        excel_file = pd.ExcelFile(EXCEL_LINK)
+        sheet_names = excel_file.sheet_names
+        
+        # Cari sheet dokumen (bisa Dokumen atau dokumen)
+        sheet_doc = [s for s in sheet_names if 'dokumen' in s.lower()][0]
+        # Cari sheet users (bisa Users atau users)
+        sheet_user = [s for s in sheet_names if 'user' in s.lower()][0]
+        
+        df_docs = excel_file.parse(sheet_doc)
+        df_depts = excel_file.parse(sheet_user)
         
         # Bersihkan spasi kosong di nama kolom
-        df_docs.columns = df_docs.columns.str.strip()
-        df_depts.columns = df_depts.columns.str.strip()
+        df_docs.columns = df_docs.columns.str.strip().str.lower()
+        df_depts.columns = df_depts.columns.str.strip().str.lower()
         
         return df_docs, df_depts
     except Exception as e:
-        st.error(f"Gagal memuat database Excel otomatis. Pastikan nama Sheet di Excel Anda adalah 'Dokumen' and 'Users'.")
+        st.error("Gagal membaca struktur Excel. Silakan pastikan file Excel di OneDrive Anda tidak sedang ditutup paksa atau rusak.")
         return pd.DataFrame(), pd.DataFrame()
 
 # Memuat data ke memori aplikasi
@@ -39,6 +48,7 @@ if not st.session_state.is_logged_in:
     st.subheader("🔑 Login Portal Departemen")
     
     if not db_departments.empty:
+        # Deteksi nama kolom secara fleksibel
         col_dept = 'dept_name' if 'dept_name' in db_departments.columns else db_departments.columns[0]
         col_pass = 'password' if 'password' in db_departments.columns else db_departments.columns[1]
         
@@ -52,6 +62,7 @@ if not st.session_state.is_logged_in:
             elif not password_input:
                 st.warning("Kolom password tidak boleh kosong!")
             else:
+                # Validasi login kustom
                 match = db_departments[
                     (db_departments[col_dept].astype(str).str.strip().str.upper() == dept_input.strip().upper()) & 
                     (db_departments[col_pass].astype(str).str.strip() == password_input.strip())
@@ -91,7 +102,8 @@ else:
             if df_filtered.empty:
                 st.info(f"Saat ini tidak ada dokumen dari departemen {current_dept} yang sedang diproses di meja BUH.")
             else:
-                kolom_tampilan = ['department', 'departemen', 'pic', 'dokumen', 'tanggal_masuk', 'tanggal_ambil', 'urgency', 'status', 'remark']
+                # Mengikuti susunan 8 kolom yang Anda berikan
+                kolom_tampilan = ['department', 'pic', 'dokumen', 'tanggal_masuk', 'tanggal_ambil', 'urgency', 'status', 'remark']
                 kolom_tersedia = [col for col in kolom_tampilan if col in df_filtered.columns]
                 
                 st.dataframe(
@@ -110,7 +122,7 @@ else:
                     doc_name = row.get('dokumen', 'Dokumen Tanpa Nama')
                     pic_name = row.get('pic', '-')
                     
-                    if status_val == 'COMPLETED':
+                    if status_val == 'COMPLETED' or status_val == 'SELESAI':
                         st.success(f"✅ {is_urgent}**{doc_name}** (PIC: {pic_name}) — Selesai! Pengambilan berkas: {row.get('tanggal_ambil', '-')}")
                     elif status_val == 'REVISION REQUIRED' or status_val == 'PERLU REVISI':
                         st.error(f"⚠️ {is_urgent}**{doc_name}** (PIC: {pic_name}) — Perlu Revisi! Catatan Abygaile: {row.get('remark', '-')}")
