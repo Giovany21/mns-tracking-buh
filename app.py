@@ -1,31 +1,18 @@
 import streamlit as st
 import pandas as pd
-import requests
-from io import BytesIO
 
 # --- 1. KONFIGURASI HALAMAN UTAMA ---
 st.set_page_config(page_title="MNS Document Tracking", layout="centered", page_icon="📑")
 
-# --- 2. DATABASE UTAMA (LINK DIRECT DOWNLOAD ONEDRIVE) ---
-EXCEL_LINK = "https://onedrive.live.com/download?cid=DD9FA8FB69B8D724&resid=DD9FA8FB69B8D724%21142234&authkey=AHqOZdbUt51LujM"
+# --- 2. DATABASE UTAMA (BACA FILE LOKAL DARI GITHUB) ---
+# Kita tidak lagi pakai link, langsung panggil nama filenya
+FILE_EXCEL = "Database_Tracking_MNS.xlsx"
 
 @st.cache_data(ttl=5) # Refresh 5 detik
 def load_data_from_excel():
     try:
-        # Menyamar sebagai browser Chrome Windows
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-        }
-        
-        # Proses mengunduh file
-        response = requests.get(EXCEL_LINK, headers=headers)
-        response.raise_for_status() 
-        
-        # Mengubah data yang diunduh menjadi bentuk file memori
-        excel_data = BytesIO(response.content)
-        
-        # PERBAIKAN: Menambahkan 'engine="openpyxl"' secara eksplisit agar sistem tidak bingung
-        excel_file = pd.ExcelFile(excel_data, engine='openpyxl')
+        # Buka file excel langsung dari dalam folder GitHub
+        excel_file = pd.ExcelFile(FILE_EXCEL, engine='openpyxl')
         sheet_names = excel_file.sheet_names
         
         # Cari sheet dengan fleksibel
@@ -41,11 +28,8 @@ def load_data_from_excel():
         
         return df_docs, df_depts
         
-    except requests.exceptions.RequestException as req_err:
-        st.error(f"Akses ke OneDrive diblokir/gagal (Network Error): {req_err}")
-        return pd.DataFrame(), pd.DataFrame()
     except Exception as e:
-        st.error(f"Gagal membaca format data Excel (Parsing Error): {e}")
+        st.error(f"Gagal membaca file Excel lokal: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
 # Memuat data
@@ -90,7 +74,7 @@ if not st.session_state.is_logged_in:
                 else:
                     st.error("Password salah! Silakan periksa kembali atau hubungi Sekretaris (Abygaile).")
     else:
-        st.info("Sistem sedang mengunduh dan menyinkronkan data dari OneDrive...")
+        st.info("Sistem sedang memuat data dari database GitHub...")
 
 # --- 5. HALAMAN UTAMA MONITORING (SETELAH LOG IN BERHASIL) ---
 else:
