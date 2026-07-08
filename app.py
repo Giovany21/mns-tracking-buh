@@ -92,7 +92,7 @@ if 'is_logged_in' not in st.session_state:
     st.session_state.session_dept = None
     st.session_state.session_role = None
 
-# Header Header Korporat
+# Header Korporat
 st.markdown("<h1 style='color: #0f172a; margin-bottom: 0px;'>📑 Document Tracking Portal</h1>", unsafe_allow_html=True)
 st.markdown("<p style='color: #64748b; font-size: 15px;'>Multi Nabati Sulawesi — Independent BUH Sign Monitoring System</p>", unsafe_allow_html=True)
 st.markdown("<hr style='margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
@@ -188,10 +188,24 @@ else:
 
         with tab_update:
             if not df_docs.empty:
-                df_docs['dropdown_label'] = df_docs['id'].astype(str) + " - " + df_docs['dokumen'] + " [" + df_docs['department'] + "]"
+                # MODIFIKASI BARU: Fungsi untuk merakit label dropdown dengan status & emoji
+                def format_dropdown_label(row):
+                    stat = str(row['status']).upper().strip()
+                    base_text = f"{row['id']} - {row['dokumen']} [{row['department']}]"
+                    if stat == 'COMPLETED':
+                        return f"{base_text} ➔ ✅ Selesai"
+                    elif stat == 'REVISION REQUIRED':
+                        return f"{base_text} ➔ ⚠️ Revisi"
+                    else:
+                        return f"{base_text} ➔ ⏳ {row['status']}"
+
+                # Menerapkan format ke kolom baru
+                df_docs['dropdown_label'] = df_docs.apply(format_dropdown_label, axis=1)
+                
                 pilihan_dokumen = st.selectbox("Pilih berkas yang ingin diubah kinerjanya:", df_docs['dropdown_label'])
                 
                 if pilihan_dokumen:
+                    # Sistem tetap aman karena ID di depan tidak terganggu oleh tambahan teks di belakang
                     doc_id = int(pilihan_dokumen.split(" - ")[0])
                     doc_terpilih = df_docs[df_docs['id'] == doc_id].iloc[0]
                     
