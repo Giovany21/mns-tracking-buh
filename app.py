@@ -5,24 +5,23 @@ import pandas as pd
 st.set_page_config(page_title="MNS Document Tracking", layout="centered", page_icon="📑")
 
 # --- 2. DATABASE UTAMA (BACA FILE LOKAL DARI GITHUB) ---
-# Kita tidak lagi pakai link, langsung panggil nama filenya
 FILE_EXCEL = "Database_Tracking_MNS.xlsx"
 
-@st.cache_data(ttl=5) # Refresh 5 detik
+@st.cache_data(ttl=5) # Refresh otomatis setiap 5 detik
 def load_data_from_excel():
     try:
-        # Buka file excel langsung dari dalam folder GitHub
+        # Buka file excel langsung dari folder GitHub
         excel_file = pd.ExcelFile(FILE_EXCEL, engine='openpyxl')
         sheet_names = excel_file.sheet_names
         
-        # Cari sheet dengan fleksibel
+        # Cari nama sheet secara fleksibel (mengabaikan huruf besar/kecil)
         sheet_doc = [s for s in sheet_names if 'dokumen' in s.lower()][0]
         sheet_user = [s for s in sheet_names if 'user' in s.lower()][0]
         
         df_docs = excel_file.parse(sheet_doc)
         df_depts = excel_file.parse(sheet_user)
         
-        # Bersihkan spasi kosong di nama kolom
+        # Bersihkan spasi kosong di nama kolom dan ubah ke huruf kecil
         df_docs.columns = df_docs.columns.astype(str).str.strip().str.lower()
         df_depts.columns = df_depts.columns.astype(str).str.strip().str.lower()
         
@@ -88,8 +87,7 @@ else:
         st.session_state.session_dept = None
         st.rerun()
 
-    st.subheader(f"📊 Progress Kontrol Dokumen - {current_dept}")
-    st.markdown("Berikut adalah tabel kontrol dokumen internal departemen Anda:")
+    st.subheader(f"📊 Kontrol Dokumen - {current_dept}")
     
     if not db_tracking_dokumen.empty:
         col_doc_dept = 'department' if 'department' in db_tracking_dokumen.columns else 'departemen'
@@ -99,33 +97,55 @@ else:
             df_filtered = db_tracking_dokumen[db_tracking_dokumen['dept_clean'] == current_dept.strip().upper()]
             
             if df_filtered.empty:
-                st.info(f"Saat ini tidak ada dokumen dari departemen {current_dept} yang sedang diproses di meja BUH.")
+                st.info(f"Saat ini tidak ada dokumen dari departemen {current_dept} di dalam sistem.")
             else:
+                # Kolom yang akan ditampilkan tabel
                 kolom_tampilan = ['department', 'pic', 'dokumen', 'tanggal_masuk', 'tanggal_ambil', 'urgency', 'status', 'remark']
                 kolom_tersedia = [col for col in kolom_tampilan if col in df_filtered.columns]
                 
-                st.dataframe(
-                    df_filtered[kolom_tersedia], 
-                    use_container_width=True, 
-                    hide_index=True
-                )
+                # Normalisasi data status untuk penyaringan internal
+                df_filtered['status_clean'] = df_filtered['status'].astype(str).str.strip().str.upper()
                 
-                st.markdown("---")
-                st.markdown("### 🔔 Ringkasan & Catatan Penting")
-                for _, row in df_filtered.iterrows():
-                    urg_val = str(row.get('urgency', '')).upper().strip()
-                    is_urgent = "🚨 [URGENT] " if urg_val in ["HIGH", "URGENT"] else ""
-                    
-                    status_val = str(row.get('status', '')).upper().strip()
-                    doc_name = row.get('dokumen', 'Dokumen Tanpa Nama')
-                    pic_name = row.get('pic', '-')
-                    
-                    if status_val == 'COMPLETED' or status_val == 'SELESAI':
-                        st.success(f"✅ {is_urgent}**{doc_name}** (PIC: {pic_name}) — Selesai! Pengambilan berkas: {row.get('tanggal_ambil', '-')}")
-                    elif status_val == 'REVISION REQUIRED' or status_val == 'PERLU REVISI':
-                        st.error(f"⚠️ {is_urgent}**{doc_name}** (PIC: {pic_name}) — Perlu Revisi! Catatan Abygaile: {row.get('remark', '-')}")
+                # PEMISAHAN DATA DATA (Outstanding vs Completed)
+                df_completed = df_filtered[df_filtered['status_clean'].isin(['COMPLETED', 'SELESAI'])]
+                df_outstanding = df_filtered[~df_filtered['status_clean'].isin(['COMPLETED', 'SELESAI'])]
+                
+                # MEMBUAT TAB TAMPILAN DI WEB
+                tab_outstanding, tab_completed = st.tabs(["⏳ Outstanding (Prioritas)", "✅ Completed / Selesai"])
+                
+                # --- TAMPILAN TAB 1: OUTSTANDING ---
+                with tab_outstanding:
+                    st.markdown("##### 📌 Berkas dalam Proses Tanda Tangan BUH")
+                    if df_outstanding.empty:
+                        st.success("Semua dokumen departemen Anda telah selesai diproses! Tidak ada berkas outstanding.")
                     else:
-                        st.info(f"⏳ {is_urgent}**{doc_name}** (PIC: {pic_name}) — Status: *{row.get('status', 'Diproses')}*")
+                        st.dataframe(df_outstanding[kolom_tersedia], use_container_width=True, hide_index=True)
+                        
+                        # Ringkasan cepat khusus berkas outstanding
+                        st.markdown("### 🔔 Catatan Berkas Aktif")
+                        for _, row in df_outstanding.iterrows():
+                            urg_val = str(row.get('urgency', '')).upper().strip()
+                            is_urgent = "🚨 [URGENT] " if urg_val in ["HIGH", "URGENT"] else ""
+                            status_val = str(row.get('status', '')).upper().strip()
+                            
+                            if status_val in ['REVISION REQUIRED', 'PERLU REVISI']:
+                                st.error(f"⚠️ {is_urgent}**{row['dokumen']}** (PIC: {row['pic']}) — Perlu Revisi! Catatan: {row.get('remark', '-')}")
+                            else:
+                                st.info(f"⏳ {is_urgent}**{row['dokumen']}** (PIC: {row['pic']}) — Status: *{row.get('status', 'Diproses')}*")
+                
+                # --- TAMPILAN TAB 2: COMPLETED ---
+                with tab_completed:
+                    st.markdown("##### 🗂️ Arsip Berkas yang Sudah Ditandatangani BUH")
+                    if df_completed.empty:
+                        st.info("Belum ada riwayat dokumen yang berstatus Selesai/Completed.")
+                    else:
+                        st.dataframe(df_completed[kolom_tersedia], use_container_width=True, hide_index=True)
+                        
+                        # Ringkasan cepat khusus berkas completed
+                        st.markdown("### 📋 Detail Pengambilan Berkas")
+                        for _, row in df_completed.iterrows():
+                            st.success(f"✅ **{row['dokumen']}** (PIC: {row['pic']}) — Siap Diambil. Tanggal Ambil: {row.get('tanggal_ambil', '-')} (Remark: {row.get('remark', '-')})")
+                            
         else:
             st.error("Kolom 'department' tidak ditemukan di Sheet Dokumen Excel Anda.")
     else:
