@@ -1,152 +1,165 @@
 import streamlit as st
 import pandas as pd
+from supabase import create_client, Client
 
-# --- 1. KONFIGURASI HALAMAN UTAMA ---
-st.set_page_config(page_title="MNS Document Tracking", layout="centered", page_icon="📑")
+# --- 1. KONFIGURASI HALAMAN ---
+st.set_page_config(page_title="MNS Document Tracking", layout="wide", page_icon="📑")
 
-# --- 2. DATABASE UTAMA (BACA FILE LOKAL DARI GITHUB) ---
-FILE_EXCEL = "Database_Tracking_MNS.xlsx"
+# --- 2. KONEKSI KE SUPABASE ---
+@st.cache_resource
+def init_connection():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
-@st.cache_data(ttl=5) # Refresh otomatis setiap 5 detik
-def load_data_from_excel():
-    try:
-        # Buka file excel langsung dari folder GitHub
-        excel_file = pd.ExcelFile(FILE_EXCEL, engine='openpyxl')
-        sheet_names = excel_file.sheet_names
-        
-        # Cari nama sheet secara fleksibel (mengabaikan huruf besar/kecil)
-        sheet_doc = [s for s in sheet_names if 'dokumen' in s.lower()][0]
-        sheet_user = [s for s in sheet_names if 'user' in s.lower()][0]
-        
-        df_docs = excel_file.parse(sheet_doc)
-        df_depts = excel_file.parse(sheet_user)
-        
-        # Bersihkan spasi kosong di nama kolom dan ubah ke huruf kecil
-        df_docs.columns = df_docs.columns.astype(str).str.strip().str.lower()
-        df_depts.columns = df_depts.columns.astype(str).str.strip().str.lower()
-        
-        return df_docs, df_depts
-        
-    except Exception as e:
-        st.error(f"Gagal membaca file Excel lokal: {e}")
-        return pd.DataFrame(), pd.DataFrame()
+supabase: Client = init_connection()
 
-# Memuat data
-db_tracking_dokumen, db_departments = load_data_from_excel()
+# Fungsi Tarik Data
+def get_users():
+    response = supabase.table("users").select("*").execute()
+    return pd.DataFrame(response.data)
 
-# --- 3. MANAJEMEN STATE LOGIN ---
+def get_dokumen():
+    response = supabase.table("dokumen").select("*").order("id", desc=True).execute()
+    return pd.DataFrame(response.data)
+
+# --- 3. MANAJEMEN LOGIN ---
 if 'is_logged_in' not in st.session_state:
     st.session_state.is_logged_in = False
     st.session_state.session_dept = None
+    st.session_state.session_role = None
 
-st.write("## 📑 Document Tracking System (BUH Sign)")
+st.title("📑 Document Tracking System (BUH Sign)")
 st.write("Multi Nabati Sulawesi — Independent Portal")
 st.markdown("---")
 
-# --- 4. HALAMAN INPUT LOGIN DEPARTEMEN ---
+# --- 4. HALAMAN LOGIN ---
 if not st.session_state.is_logged_in:
     st.subheader("🔑 Login Portal Departemen")
+    db_users = get_users()
     
-    if not db_departments.empty:
-        col_dept = 'dept_name' if 'dept_name' in db_departments.columns else db_departments.columns[0]
-        col_pass = 'password' if 'password' in db_departments.columns else db_departments.columns[1]
-        
-        list_dept = db_departments[col_dept].dropna().unique().tolist()
+    if not db_users.empty:
+        list_dept = db_users['dept_name'].tolist()
         dept_input = st.selectbox("Pilih Departemen Anda", ["-- Pilih Departemen --"] + list_dept)
         password_input = st.text_input("Masukkan Password Akses", type="password")
         
         if st.button("Masuk ke Sistem", use_container_width=True):
-            if dept_input == "-- Pilih Departemen --":
-                st.warning("Silakan pilih salah satu departemen terlebih dahulu!")
-            elif not password_input:
-                st.warning("Kolom password tidak boleh kosong!")
+            if dept_input == "-- Pilih Departemen --" or not password_input:
+                st.warning("Pastikan departemen dipilih dan password diisi!")
             else:
-                match = db_departments[
-                    (db_departments[col_dept].astype(str).str.strip().str.upper() == dept_input.strip().upper()) & 
-                    (db_departments[col_pass].astype(str).str.strip() == password_input.strip())
-                ]
-                
+                match = db_users[(db_users['dept_name'] == dept_input) & (db_users['password'] == password_input)]
                 if not match.empty:
                     st.session_state.is_logged_in = True
                     st.session_state.session_dept = dept_input
+                    st.session_state.session_role = match.iloc[0]['role']
                     st.rerun()
                 else:
-                    st.error("Password salah! Silakan periksa kembali atau hubungi Sekretaris (Abygaile).")
+                    st.error("Password salah! Silakan hubungi Sekretaris.")
     else:
-        st.info("Sistem sedang memuat data dari database GitHub...")
+        st.error("Gagal terhubung ke Database Pengguna.")
 
-# --- 5. HALAMAN UTAMA MONITORING (SETELAH LOG IN BERHASIL) ---
+# --- 5. HALAMAN UTAMA (SETELAH LOGIN) ---
 else:
     current_dept = st.session_state.session_dept
+    current_role = st.session_state.session_role
     
-    st.sidebar.write(f"### 🏢 Departemen:")
-    st.sidebar.info(f"**{current_dept}**")
+    st.sidebar.write("### 🏢 Logged in as:")
+    st.sidebar.info(f"**{current_dept}**\n\n(Role: {current_role.upper()})")
     
     if st.sidebar.button("Keluar (Log Out)", use_container_width=True):
         st.session_state.is_logged_in = False
         st.session_state.session_dept = None
+        st.session_state.session_role = None
         st.rerun()
 
-    st.subheader(f"📊 Kontrol Dokumen - {current_dept}")
-    
-    if not db_tracking_dokumen.empty:
-        col_doc_dept = 'department' if 'department' in db_tracking_dokumen.columns else 'departemen'
+    df_docs = get_dokumen()
+
+    # ==========================================
+    # BAGIAN A: TAMPILAN ADMIN (KHUSUS ABYGAILE)
+    # ==========================================
+    if current_role == 'admin':
+        st.subheader("🛠️ Admin Dashboard - Kontrol Penuh Dokumen")
         
-        if col_doc_dept in db_tracking_dokumen.columns:
-            db_tracking_dokumen['dept_clean'] = db_tracking_dokumen[col_doc_dept].astype(str).str.strip().str.upper()
-            df_filtered = db_tracking_dokumen[db_tracking_dokumen['dept_clean'] == current_dept.strip().upper()]
+        tab_tambah, tab_update, tab_database = st.tabs(["➕ Tambah Dokumen Baru", "📝 Update Status Berkas", "🗂️ Lihat Semua Database"])
+        
+        # TAB 1: INPUT DOKUMEN BARU (CREATE)
+        with tab_tambah:
+            with st.form("form_tambah"):
+                st.write("Masukkan data berkas yang baru diterima:")
+                col1, col2 = st.columns(2)
+                with col1:
+                    i_dept = st.text_input("Departemen Pengusul (cth: COST CONTROL)")
+                    i_pic = st.text_input("Nama PIC")
+                    i_dokumen = st.text_input("Nama Dokumen")
+                with col2:
+                    i_tgl_masuk = st.date_input("Tanggal Masuk")
+                    i_urgency = st.selectbox("Urgency", ["Normal", "High", "Urgent"])
+                
+                submit_add = st.form_submit_button("Simpan Dokumen ke Database")
+                if submit_add:
+                    if i_dept and i_dokumen:
+                        supabase.table("dokumen").insert({
+                            "department": i_dept.upper(), "pic": i_pic, "dokumen": i_dokumen,
+                            "tanggal_masuk": str(i_tgl_masuk), "urgency": i_urgency, "status": "Received"
+                        }).execute()
+                        st.success("Dokumen berhasil ditambahkan!")
+                        st.rerun()
+                    else:
+                        st.error("Departemen dan Nama Dokumen wajib diisi!")
+
+        # TAB 2: UPDATE STATUS (EDIT)
+        with tab_update:
+            if not df_docs.empty:
+                # Membuat format pilihan dropdown yang mudah dibaca
+                df_docs['dropdown_label'] = df_docs['id'].astype(str) + " - " + df_docs['dokumen'] + " (" + df_docs['department'] + ")"
+                pilihan_dokumen = st.selectbox("Pilih Dokumen yang ingin di-update:", df_docs['dropdown_label'])
+                
+                if pilihan_dokumen:
+                    doc_id = int(pilihan_dokumen.split(" - ")[0])
+                    doc_terpilih = df_docs[df_docs['id'] == doc_id].iloc[0]
+                    
+                    with st.form("form_update"):
+                        st.write(f"Mengubah status untuk: **{doc_terpilih['dokumen']}**")
+                        u_status = st.selectbox("Update Status:", ["Received", "Pending BUH", "Revision Required", "Completed"], index=["Received", "Pending BUH", "Revision Required", "Completed"].index(doc_terpilih['status']) if doc_terpilih['status'] in ["Received", "Pending BUH", "Revision Required", "Completed"] else 0)
+                        u_remark = st.text_input("Catatan Tambahan (Remark):", value=doc_terpilih['remark'] if pd.notna(doc_terpilih['remark']) else "")
+                        u_tgl_ambil = st.date_input("Tanggal Ambil (Isi jika sudah selesai):")
+                        
+                        submit_update = st.form_submit_button("Update Status Dokumen")
+                        if submit_update:
+                            supabase.table("dokumen").update({
+                                "status": u_status, "remark": u_remark, "tanggal_ambil": str(u_tgl_ambil)
+                            }).eq("id", doc_id).execute()
+                            st.success("Status berhasil di-update!")
+                            st.rerun()
+                            
+        # TAB 3: MASTER DATABASE (READ SEMUA & HAPUS)
+        with tab_database:
+            st.dataframe(df_docs[['id', 'department', 'pic', 'dokumen', 'tanggal_masuk', 'tanggal_ambil', 'urgency', 'status', 'remark']], use_container_width=True)
+
+    # ==========================================
+    # BAGIAN B: TAMPILAN USER BIASA (READ-ONLY)
+    # ==========================================
+    else:
+        st.subheader(f"📊 Pantau Dokumen - {current_dept}")
+        
+        if not df_docs.empty:
+            # Saring data khusus departemen user yang login
+            df_docs['dept_clean'] = df_docs['department'].astype(str).str.strip().str.upper()
+            df_filtered = df_docs[df_docs['dept_clean'] == current_dept.strip().upper()]
             
             if df_filtered.empty:
-                st.info(f"Saat ini tidak ada dokumen dari departemen {current_dept} di dalam sistem.")
+                st.info("Tidak ada dokumen aktif untuk departemen Anda.")
             else:
-                # Kolom yang akan ditampilkan tabel
-                kolom_tampilan = ['department', 'pic', 'dokumen', 'tanggal_masuk', 'tanggal_ambil', 'urgency', 'status', 'remark']
-                kolom_tersedia = [col for col in kolom_tampilan if col in df_filtered.columns]
+                kolom_tampilan = ['pic', 'dokumen', 'tanggal_masuk', 'tanggal_ambil', 'urgency', 'status', 'remark']
                 
-                # Normalisasi data status untuk penyaringan internal
+                # Filter Outstanding vs Completed
                 df_filtered['status_clean'] = df_filtered['status'].astype(str).str.strip().str.upper()
+                df_completed = df_filtered[df_filtered['status_clean'] == 'COMPLETED']
+                df_outstanding = df_filtered[df_filtered['status_clean'] != 'COMPLETED']
                 
-                # PEMISAHAN DATA DATA (Outstanding vs Completed)
-                df_completed = df_filtered[df_filtered['status_clean'].isin(['COMPLETED', 'SELESAI'])]
-                df_outstanding = df_filtered[~df_filtered['status_clean'].isin(['COMPLETED', 'SELESAI'])]
+                tab_out, tab_comp = st.tabs(["⏳ Outstanding (Dalam Proses)", "✅ Completed (Selesai)"])
                 
-                # MEMBUAT TAB TAMPILAN DI WEB
-                tab_outstanding, tab_completed = st.tabs(["⏳ Outstanding (Prioritas)", "✅ Completed / Selesai"])
-                
-                # --- TAMPILAN TAB 1: OUTSTANDING ---
-                with tab_outstanding:
-                    st.markdown("##### 📌 Berkas dalam Proses Tanda Tangan BUH")
-                    if df_outstanding.empty:
-                        st.success("Semua dokumen departemen Anda telah selesai diproses! Tidak ada berkas outstanding.")
-                    else:
-                        st.dataframe(df_outstanding[kolom_tersedia], use_container_width=True, hide_index=True)
-                        
-                        # Ringkasan cepat khusus berkas outstanding
-                        st.markdown("### 🔔 Catatan Berkas Aktif")
-                        for _, row in df_outstanding.iterrows():
-                            urg_val = str(row.get('urgency', '')).upper().strip()
-                            is_urgent = "🚨 [URGENT] " if urg_val in ["HIGH", "URGENT"] else ""
-                            status_val = str(row.get('status', '')).upper().strip()
-                            
-                            if status_val in ['REVISION REQUIRED', 'PERLU REVISI']:
-                                st.error(f"⚠️ {is_urgent}**{row['dokumen']}** (PIC: {row['pic']}) — Perlu Revisi! Catatan: {row.get('remark', '-')}")
-                            else:
-                                st.info(f"⏳ {is_urgent}**{row['dokumen']}** (PIC: {row['pic']}) — Status: *{row.get('status', 'Diproses')}*")
-                
-                # --- TAMPILAN TAB 2: COMPLETED ---
-                with tab_completed:
-                    st.markdown("##### 🗂️ Arsip Berkas yang Sudah Ditandatangani BUH")
-                    if df_completed.empty:
-                        st.info("Belum ada riwayat dokumen yang berstatus Selesai/Completed.")
-                    else:
-                        st.dataframe(df_completed[kolom_tersedia], use_container_width=True, hide_index=True)
-                        
-                        # Ringkasan cepat khusus berkas completed
-                        st.markdown("### 📋 Detail Pengambilan Berkas")
-                        for _, row in df_completed.iterrows():
-                            st.success(f"✅ **{row['dokumen']}** (PIC: {row['pic']}) — Siap Diambil. Tanggal Ambil: {row.get('tanggal_ambil', '-')} (Remark: {row.get('remark', '-')})")
-                            
-        else:
-            st.error("Kolom 'department' tidak ditemukan di Sheet Dokumen Excel Anda.")
-    else:
-        st.warning("Data dokumen kosong atau gagal dimuat.")
+                with tab_out:
+                    st.dataframe(df_outstanding[kolom_tampilan], use_container_width=True, hide_index=True)
+                with tab_comp:
+                    st.dataframe(df_completed[kolom_tampilan], use_container_width=True, hide_index=True)
